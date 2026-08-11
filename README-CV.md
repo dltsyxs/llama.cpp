@@ -4,6 +4,11 @@
 > 基于 llama.cpp 主线（上游 `ggml-org/llama.cpp`）添加：CustomVoice 预置音色 / 自然语言指示 / 长文本 EOS 修复。
 > 中文详细记录（含量化流程、RTF 实测、踩坑）见本文件末尾。
 
+> [!NOTE]
+> 本 fork 中除 cherry-pick 的上游 PR #26603 外的所有改动代码，均由
+> **DeepSeek-V4-Flash-0731 + QwenPaw** 编写（AI 辅助生成），仅供参考/自用。
+> 使用前请自行审查代码，作者不对其正确性与安全性负责。
+
 ---
 
 ## 一、基线版本
