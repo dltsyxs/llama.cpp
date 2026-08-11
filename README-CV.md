@@ -76,7 +76,7 @@ cmake --build build --config Release --target llama-tts llama-server -j 8
 ```
 
 - 环境：VS2022 + CMake + CUDA 13.0（3060 sm_86）
-- 首次全量编译 20-40 分钟；之后只编 mtmd/llama-tts/llama-server 很快
+- 首次全量编译时间较长；之后只编 mtmd/llama-tts/llama-server 很快
 - 产物：`build/bin/Release/llama-tts.exe` + `llama-server.exe` + `mtmd.dll`
 
 ## 五、使用方法
@@ -133,15 +133,15 @@ open("out.wav", "wb").write(r.content)
 
 ## 七、性能实测（3060 Laptop 6GB，server 模式）
 
-| 组合 | 模型大小 | RTF | 听感 |
-|---|---|---|---|
-| 0.6B 全Q4 | 564MB | 0.34 | 新手播音员（语速偶尔慢）|
-| 1.7B 全Q4 | 1.23GB | 0.42 | **自信播音员（主力推荐）** |
-| 1.7B Q4+Q8mm | 1.3GB | 0.49 | 同上 |
-| 1.7B 双Q8 | 2.1GB | 0.58 | 显存峰值 5940MB 偏危险 |
-| 1.7B 全bf16 | 3.9GB | 1.22 | 基准 |
+| 组合 | 模型大小 | RTF |
+|---|---|---|
+| 0.6B 全Q4 | 564MB | 0.34 |
+| 1.7B 全Q4 | 1.23GB | 0.42 |
+| 1.7B Q4+Q8mm | 1.3GB | 0.49 |
+| 1.7B 双Q8 | 2.1GB | 0.58 |
+| 1.7B 全bf16 | 3.9GB | 1.22 |
 
-- `-ngl 99` 全 GPU 只要不溢出就是最快；溢出到共享内存（DDR4 带宽）反而变慢
+- `-ngl 99` 全 GPU 只要不溢出就是最快；溢出到共享内存反而变慢
 - server 推理后显存不降是正常的（CUDA 内存池复用）
 
 ## 八、模型转换与量化（可复用）
