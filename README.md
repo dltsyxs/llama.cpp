@@ -1,3 +1,16 @@
+> [!IMPORTANT]
+> # 🎙️ Qwen3-TTS CustomVoice fork
+>
+> This fork adds **Qwen3-TTS CustomVoice** support (9 preset voices + language + natural-language instruction)
+> plus a server `POST /tts` endpoint (upstream PR #26603) and a fix for long-text generation
+> not stopping (codec EOS detection).
+>
+> **Baseline**: llama.cpp upstream `030ebb558` (2026-08-10).
+> **Branch**: `cv-26603` — see **[README-CV.md](README-CV.md)** for full documentation
+> (changes, usage, RTF benchmarks, quantization workflow, troubleshooting).
+
+---
+
 # llama.cpp
 
 ![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
