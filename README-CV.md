@@ -109,7 +109,7 @@ open("out.wav", "wb").write(r.content)
 |---|---|
 | `--tts-lang` / `"lang"` | 语言（zh/en/ja/ko/de/fr/ru 等）|
 | `--tts-speaker-id` / `"speaker_id"` | CustomVoice 预置音色名（见下表）|
-| `--tts-instruct` / `"instruct"` | 自然语言指示（**1.7B 专用**，0.6B 官方不支持）|
+| `--tts-instruct` / `"instruct"` | 自然语言指示（**1.7B 效果最好**；0.6B 也可用但仅强情绪有效，见附录 A5）|
 | `--tts-speaker-file` / `"speaker_ref"` | Base 模型参考音频克隆（原功能保留）|
 
 ## 六、CustomVoice 预置音色（9 个）
@@ -221,6 +221,14 @@ with open("mmproj_tensor_types.txt", "w") as f:
 - **MSVC C2059**：`SRV_WRN("...")` 单参数导致宏展开参数不匹配（原作者 gcc/clang 没暴露）→ 加 `"%s"` 格式符
 - **mmproj Q8/Q4 量化失败**：conv 权重 ncols 不整除 32 → tensor-types 保护
 - **EOS 不停**：根因是 codec_eos 不在 EOG 集合，非量化问题（bf16 长文本也不停）
+
+### A5. 0.6B instruct 实测（2026-08-11 晚）
+
+- **官方 torch API 在 0.6B 上禁用 instruct**（`qwen_tts/inference/qwen3_tts_model.py` L799-800：`if self.model.tts_model_size in "0b6": instruct = None`）
+- **但 modeling 层的 instruct 处理是通用的**（无模型大小判断）——架构上支持，官方只是保守禁用
+- **本 fork 没模仿 API 层拦截** → 0.6B 上 `--tts-instruct` 照常生效
+- **实测（0.6B 全 Q4 + serena）**：happy/angry **正常响应**（真的开心/愤怒）；sad 偏成"小声/麻木"（更像 whisper）；whisper 只让整体变小且集中在开头
+- **结论**：0.6B instruct **强情绪有效、微妙情绪弱**；需要细腻情绪控制（悲伤/耳语）用 1.7B
 
 ### A4. 音色试听结论（用户反馈，2026-08-11 修正版）
 
