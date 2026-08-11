@@ -144,6 +144,23 @@ open("out.wav", "wb").write(r.content)
 - `-ngl 99` 全 GPU 只要不溢出就是最快；溢出到共享内存反而变慢
 - server 推理后显存不降是正常的（CUDA 内存池复用）
 
+### ⚠️ 关键：TTS 部署必须 `-c 4096`（否则 code2wav 慢 80 倍）
+
+**现象**：同样 1.7B 全 Q4、同样文本（163.8s 音频），不同上下文大小下性能天差地别：
+
+| 配置 | gen_wav（code2wav）单次 | 总耗时 | RTF |
+|---|---|---|---|
+| `-c 4096` | **0.1s** | **48s** | **0.30** |
+| 默认（`-c 32768`，模型训练上下文）| **8.5s（慢 80 倍）** | **>300s** | **~2.0** |
+
+**根因**：code2wav 的 transformer **attention 要扫描整个 KV cache**。默认 `-c 32768`（模型 `max_position_embeddings=32768`，server 不指定 `-c` 时自动采用）× 4 slots = 128K token 的 KV 池，每帧 attention 扫 128K → 计算爆炸；`-c 4096` 只有 4K，轻快。
+
+**影响**：批量长文生成（如《三体》133 句）用默认配置要 17 分钟，换 `-c 4096` 预计 4-5 分钟（每句 1.4-2.0s）。`-c 4096` 同时省 2GB 显存（加载 81%→49%、峰值 95%→65%）。
+
+**其他实测结论**：
+- `--cache-reuse` 对 TTS 无效（RTF 0.303 vs 0.300 零差异）——TTS 瓶颈在自回归生成（每帧新算），prompt 前缀只几百 token 且本来就快，无重复前缀可复用；仅"多次克隆同一参考音频"场景有微弱收益
+- 32768 是模型配置（`config.json` 的 `talker_config.max_position_embeddings`），不是权重；经转换脚本写进 GGUF 元数据（`qwen3tts.context_length`），llama.cpp 默认读取
+
 ## 八、模型转换与量化（可复用）
 
 ### 转换（torch → GGUF）
