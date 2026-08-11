@@ -4268,6 +4268,22 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.tts_speaker_file = value;
         }
     ).set_examples({LLAMA_EXAMPLE_TTS}));
+    add_opt(common_arg(
+        {"--tts-speaker-id"}, "NAME",
+        "preset speaker name for CustomVoice models (e.g. serena, vivian, eric); "
+        "mutually exclusive with --tts-speaker-file",
+        [](common_params & params, const std::string & value) {
+            params.tts_speaker_id = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TTS}));
+    add_opt(common_arg(
+        {"--tts-instruct"}, "TEXT",
+        "natural-language instruction for CustomVoice 1.7B (e.g. \"用特别愤怒的语气说\"); "
+        "not supported on 0.6B checkpoints",
+        [](common_params & params, const std::string & value) {
+            params.tts_instruct = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TTS}));
 
     //
     // diffusion params

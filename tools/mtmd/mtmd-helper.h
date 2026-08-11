@@ -183,6 +183,8 @@ struct mtmd_helper_gen_audio_inp {
 
     mtmd_bitmap * speaker_ref; // optional, can be NULL
     const char * lang; // optional, can be NULL
+    const char * speaker_id; // CustomVoice preset speaker name (e.g. "serena"), optional, can be NULL
+    const char * instruct;   // natural-language instruction (1.7B CustomVoice only), optional, can be NULL
 
     int32_t top_k;
     float   top_p;
@@ -217,6 +219,13 @@ MTMD_API int32_t mtmd_helper_gen_audio_step_gen(
                         llama_token sampled,
                         const float *  h_state_in,
                         const float ** h_state_out);
+
+// returns true if `token` is the model's end-of-speech token (codec_eos);
+// used by callers to stop generation even though the token is not in the
+// standard EOG set (llama.cpp only knows the text EOS, not the codec EOS)
+MTMD_API bool mtmd_helper_gen_audio_is_eos(
+                        mtmd_helper_gen_audio * ctx,
+                        llama_token token);
 
 // out_data valid until next get_output() or reset() call
 // out_n_samples (optional, can be NULL) receives the number of generated PCM samples
@@ -265,6 +274,8 @@ struct gen_audio {
         mtmd_helper_gen_audio_inp data = mtmd_helper_gen_audio_inp_default();
         std::string prompt_str;
         std::string lang_str;
+        std::string speaker_id_str;
+        std::string instruct_str;
         mtmd::bitmap_ptr speaker_ref_ptr;
 
         inp()                             = default;
@@ -276,6 +287,8 @@ struct gen_audio {
         void set_prompt     (std::string p)        { prompt_str = std::move(p); }
         void set_lang       (std::string l)        { lang_str   = std::move(l); }
         void set_speaker_ref(mtmd::bitmap_ptr bmp) { speaker_ref_ptr = std::move(bmp); }
+        void set_speaker_id (std::string s)        { speaker_id_str = std::move(s); }
+        void set_instruct   (std::string s)        { instruct_str = std::move(s); }
 
         // pointers are only valid as long as *this is alive
         const mtmd_helper_gen_audio_inp * get() {
@@ -283,6 +296,8 @@ struct gen_audio {
             data.prompt_len  = prompt_str.size();
             data.lang        = lang_str.empty() ? nullptr : lang_str.c_str();
             data.speaker_ref = speaker_ref_ptr.get();
+            data.speaker_id  = speaker_id_str.empty() ? nullptr : speaker_id_str.c_str();
+            data.instruct    = instruct_str.empty() ? nullptr : instruct_str.c_str();
             return &data;
         }
     };
@@ -305,6 +320,9 @@ struct gen_audio {
     }
     int32_t step_gen(llama_token sampled, const float * h_state, const float ** h_state_out) {
         return mtmd_helper_gen_audio_step_gen(ctx.get(), sampled, h_state, h_state_out);
+    }
+    bool is_eos(llama_token token) {
+        return mtmd_helper_gen_audio_is_eos(ctx.get(), token);
     }
     int32_t get_output(int32_t * out_sample_rate, const char ** out_data, size_t * out_data_len, int64_t * out_n_samples = nullptr) {
         return mtmd_helper_gen_audio_get_output(ctx.get(), out_sample_rate, out_data, out_data_len, out_n_samples);

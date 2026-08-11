@@ -1884,7 +1884,7 @@ private:
             use_backend_sampling &= !need_pre_sample_logits;
 
             // TODO: check verify if this actually works with TTS
-            backend_sampling &= task.type != SERVER_TASK_TYPE_TTS;
+            use_backend_sampling &= task.type != SERVER_TASK_TYPE_TTS;
 
             // TODO: tmp until backend sampling is fully implemented
             if (use_backend_sampling) {
@@ -3001,7 +3001,9 @@ private:
             }
 
             const int32_t n_predict = slot.task->params.n_predict > 0 ? slot.task->params.n_predict : 512;
-            if (slot.tts.n_decoded >= n_predict || llama_vocab_is_eog(vocab, slot.tts.sampled)) {
+            if (slot.tts.n_decoded >= n_predict ||
+                    llama_vocab_is_eog(vocab, slot.tts.sampled) ||
+                    slot.tts.ctx.is_eos(slot.tts.sampled)) {
                 int32_t      sample_rate = 0;
                 const char * data        = nullptr;
                 size_t       data_len    = 0;
@@ -5266,6 +5268,8 @@ void server_routes::init_routes() {
         server_task task(SERVER_TASK_TYPE_TTS);
         task.tts_inp.set_prompt(prompt);
         task.tts_inp.set_lang(json_value(body, "lang", std::string()));
+        task.tts_inp.set_speaker_id(json_value(body, "speaker_id", std::string()));
+        task.tts_inp.set_instruct(json_value(body, "instruct", std::string()));
         task.tts_inp.data.top_k     = json_value(body, "top_k", 0);
         task.tts_inp.data.top_p     = json_value(body, "top_p", 0.0f);
         task.tts_inp.data.stream    = stream;
@@ -5310,7 +5314,7 @@ void server_routes::init_routes() {
             }
             task.tts_inp.set_speaker_ref(mtmd::bitmap_ptr(wrapper.bitmap));
         } else {
-            SRV_WRN("no speaker reference provided, the model may behave randomly\n");
+            SRV_WRN("%s", "no speaker reference provided, the model may behave randomly\n");
         }
 
         auto & rd = res->rd;

@@ -118,6 +118,8 @@ int main(int argc, char ** argv) {
     inp.prompt_len  = params.prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
     inp.lang        = params.tts_lang.c_str();
+    inp.speaker_id  = params.tts_speaker_id.empty() ? nullptr : params.tts_speaker_id.c_str();
+    inp.instruct    = params.tts_instruct.empty() ? nullptr : params.tts_instruct.c_str();
     inp.top_k       = params.sampling.top_k;
     inp.top_p       = params.sampling.top_p;
 
@@ -159,7 +161,7 @@ int main(int argc, char ** argv) {
     tts_timings timings;
     const int64_t t_gen_start_us = ggml_time_us();
 
-    for (; n_frames < max_new && !llama_vocab_is_eog(vocab, sampled); n_frames++) {
+    for (; n_frames < max_new && !llama_vocab_is_eog(vocab, sampled) && !gen.is_eos(sampled); n_frames++) {
         const float * h_next = nullptr;
 
         // stage 2+3: semantic --> acoustic details --> audio waveform

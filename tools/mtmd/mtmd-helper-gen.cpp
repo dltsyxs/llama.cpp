@@ -100,6 +100,8 @@ public:
     virtual int32_t get_output(int32_t * out_sample_rate, const char ** out_data, size_t * out_data_len, int64_t * out_n_samples) = 0;
     // forces any buffered codes through code2wav now, regardless of window_frames
     virtual int32_t flush() = 0;
+    // returns true if `token` is the model's end-of-speech (codec_eos) token
+    virtual bool is_eos(llama_token token) = 0;
 
 protected:
     llama_context * lctx;
@@ -150,7 +152,18 @@ public:
         }
 
         std::vector<float> speaker_embd;
-        if (inp->speaker_ref) {
+        // CustomVoice: preset speaker via <|spk_xxx|> token embedding lookup
+        if (inp->speaker_id && inp->speaker_id[0]) {
+            const llama_token spk = find_special_token(vocab, ("<|spk_" + std::string(inp->speaker_id) + "|>").c_str());
+            if (spk == LLAMA_TOKEN_NULL) {
+                LOG_ERR("mtmd_helper_gen_audio: unknown speaker_id '%s' (model may be a Base checkpoint, not CustomVoice)\n",
+                        inp->speaker_id);
+                return 1;
+            }
+            speaker_embd = std::vector<float>(tok_embd.begin() + (size_t) spk * n_embd,
+                                              tok_embd.begin() + (size_t) (spk + 1) * n_embd);
+        } else if (inp->speaker_ref) {
+            // Base: reference audio -> speaker x-vector via ECAPA-TDNN
             if (!encode_speaker(inp->speaker_ref, speaker_embd)) {
                 return 1;
             }
@@ -184,7 +197,26 @@ public:
         }
         ids.resize((size_t) n_ids);
 
+        // CustomVoice 1.7B: optional natural-language instruction prepended before the role tokens,
+        // mirroring torch `talker_input_embeds[index].append(text_projection(get_text_embeddings()(instruct_id)))`
+        std::vector<std::vector<float>> instruct_embds;
+        if (inp->instruct && inp->instruct[0]) {
+            const std::string ins_wrap = "<|im_start|>user\n" + std::string(inp->instruct) + "<|im_end|>\n";
+            std::vector<llama_token> ins_ids(ins_wrap.size() + 16);
+            int n_ins = llama_tokenize(vocab, ins_wrap.c_str(), (int32_t) ins_wrap.size(), ins_ids.data(),
+                                       (int32_t) ins_ids.size(), false, true);
+            if (n_ins < 1) {
+                LOG_ERR("mtmd_helper_gen_audio: instruct tokenization failed\n");
+                return 1;
+            }
+            ins_ids.resize((size_t) n_ins);
+            for (llama_token t : ins_ids) {
+                instruct_embds.push_back(row(t));
+            }
+        }
+
         std::vector<std::vector<float>> prompt;
+        for (const auto & emb : instruct_embds) prompt.push_back(emb);
         for (int i = 0; i < 3; i++) prompt.push_back(row(ids[(size_t) i]));
         prompt.push_back(sum_row(tts_pad, c_think));
         prompt.push_back(sum_row(tts_pad, c_think_b));
@@ -351,6 +383,10 @@ public:
 
     int32_t flush() override {
         return flush_gen_wav() ? 0 : 1;
+    }
+
+    bool is_eos(llama_token token) override {
+        return token == codec_eos;
     }
 
 private:
@@ -543,6 +579,13 @@ int32_t mtmd_helper_gen_audio_step_gen(mtmd_helper_gen_audio * ctx, llama_token 
         return 1;
     }
     return ctx->pipeline->step_gen(sampled, h_state_in, h_state_out);
+}
+
+bool mtmd_helper_gen_audio_is_eos(mtmd_helper_gen_audio * ctx, llama_token token) {
+    if (!ctx->pipeline) {
+        return false;
+    }
+    return ctx->pipeline->is_eos(token);
 }
 
 int32_t mtmd_helper_gen_audio_get_output(mtmd_helper_gen_audio * ctx, int32_t * out_sample_rate,

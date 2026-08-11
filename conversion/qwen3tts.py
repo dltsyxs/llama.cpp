@@ -216,32 +216,44 @@ class Qwen3TTSSpeakerEncoderModel(MmprojModel):
         if hparams is None:
             hparams = ModelBase.load_hparams(dir_model, is_mistral_format=False)
         hparams["text_config"] = {"hidden_size": hparams["talker_config"]["hidden_size"]}
-        # ECAPA-TDNN has a fixed 4-stage backbone, but MmprojModel.__init__ needs a n_block_keys
-        hparams["speaker_encoder_config"]["n_layers"] = 4
+        # CustomVoice checkpoints have no speaker encoder (pre-set voices via spk_id table lookups),
+        # only Base checkpoints carry the ECAPA-TDNN speaker encoder
+        self._has_speaker_encoder = "speaker_encoder_config" in hparams
+        if self._has_speaker_encoder:
+            # ECAPA-TDNN has a fixed 4-stage backbone, but MmprojModel.__init__ needs a n_block_keys
+            hparams["speaker_encoder_config"]["n_layers"] = 4
         super().__init__(dir_model, *args, hparams=hparams, **kwargs)
         self._wav_config_cache = None
 
     def get_audio_config(self) -> dict[str, Any] | None:
-        return self.global_config.get("speaker_encoder_config")
+        # Base checkpoints carry the ECAPA-TDNN speaker encoder config; CustomVoice does not.
+        # For CustomVoice return the talker config so the base class hparams lookups (block_count etc.)
+        # still resolve, while _has_speaker_encoder stays False so only the GEN branch is written.
+        if "speaker_encoder_config" in self.global_config:
+            return self.global_config["speaker_encoder_config"]
+        return self.global_config.get("talker_config")
 
     def set_gguf_parameters(self):
         self.gguf_writer.add_file_type(self.ftype)
-        self.gguf_writer.add_clip_has_audio_encoder(True)
-        self.gguf_writer.add_clip_audio_projector_type(gguf.VisionProjectorType.QWEN3TTS_SPKENC)
 
-        # handle speaker encoder config
-        self.gguf_writer.add_audio_projection_dim(self.n_embd_text)
-        # mel_spectrogram() front-end: sr=24000, n_fft=1024, hop=256, n_mels=128, fmin=0, fmax=12000 (=sr/2, the clip.cpp default)
-        self.gguf_writer.add_audio_num_mel_bins(128)
-        # 3 SE-Res2Net stages; the stem conv, mfa, asp and fc are not counted here
-        self.gguf_writer.add_audio_block_count(3)
-        # ECAPA-TDNN has no attention/FFN, these are dummy to allow clip.cpp to load it
-        self.gguf_writer.add_audio_embedding_length(1536)
-        self.gguf_writer.add_audio_head_count(1)
-        self.gguf_writer.add_audio_feed_forward_length(1536)
-        self.gguf_writer.add_audio_attention_layernorm_eps(1e-5)
+        # handle speaker encoder config (Base only; CustomVoice has none)
+        if self._has_speaker_encoder:
+            self.gguf_writer.add_clip_has_audio_encoder(True)
+            self.gguf_writer.add_clip_audio_projector_type(gguf.VisionProjectorType.QWEN3TTS_SPKENC)
 
-        # handle code predictor config
+            # handle speaker encoder config
+            self.gguf_writer.add_audio_projection_dim(self.n_embd_text)
+            # mel_spectrogram() front-end: sr=24000, n_fft=1024, hop=256, n_mels=128, fmin=0, fmax=12000 (=sr/2, the clip.cpp default)
+            self.gguf_writer.add_audio_num_mel_bins(128)
+            # 3 SE-Res2Net stages; the stem conv, mfa, asp and fc are not counted here
+            self.gguf_writer.add_audio_block_count(3)
+            # ECAPA-TDNN has no attention/FFN, these are dummy to allow clip.cpp to load it
+            self.gguf_writer.add_audio_embedding_length(1536)
+            self.gguf_writer.add_audio_head_count(1)
+            self.gguf_writer.add_audio_feed_forward_length(1536)
+            self.gguf_writer.add_audio_attention_layernorm_eps(1e-5)
+
+        # handle code predictor config (shared by Base and CustomVoice)
         self.gguf_writer.add_clip_has_gen_audio_encoder(True)
         self.gguf_writer.add_clip_gen_audio_projector_type(gguf.VisionProjectorType.QWEN3TTS_GEN)
         code_predictor_config = self.global_config["talker_config"]["code_predictor_config"]
