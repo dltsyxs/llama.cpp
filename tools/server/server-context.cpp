@@ -1859,6 +1859,12 @@ private:
             if (!slot.tts.is_supported()) {
                 slot.tts.ctx.init(ctx_tgt, slot.mctx);
             }
+            // TTS slots bypass the shared batch (pre_decode() returns early for them),
+            // so they never run the per-request KV hygiene the normal prompt path does.
+            // Without this, the second request on the same slot fails with
+            // "inconsistent sequence positions" / "TTS prompt processing failed".
+            // See LocalAI report on PR #26603.
+            slot.prompt_clear();
             task.tts_inp.data.seq_id = slot.id;
             if (slot.tts.ctx.set_input(task.tts_inp.get()) != 0) {
                 send_error(task, "failed to process TTS prompt", ERROR_TYPE_SERVER);
