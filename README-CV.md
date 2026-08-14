@@ -127,6 +127,9 @@ open("out.wav", "wb").write(r.content)
 
 实测（1.7B Base bf16，3060 6GB）：固定锚 = 温迪 3s 音频，逐句链式 ref，avg RTF 0.467，整段音色稳定（用户试听确认）。
 
+> [!IMPORTANT]
+> **Base 必须用 Q4 量化，别用 bf16（6GB 卡实测会偶发卡死）**。Base bf16 主干 3.3GB + mmproj 0.6GB，在 6GB 显存上运行时偶发一次性分配冲到 ~5.9GB（97% 上限，含 code2wav workspace），掉进共享内存换出 → 自回归生成从 ~17 帧/秒暴跌到 0.5~2.4 帧/秒且不恢复（概率约 1/6，复现时显存峰值 5951MB vs 正常 3.6GB）。**CustomVoice Q4（~1.2GB）从不会触发**，这就是早期长文批量没卡过的原因。修复：Base 主干/`mmproj` 量化 Q4_K_M（mmproj 用 tensor-types 保护 conv 张量为 F16），总量 ~1.26GB，实测 6 连跑零卡顿、速度 43 帧/秒（bf16 的 2.5 倍）、峰值显存 4.0GB。
+
 **CLI**（每句一个进程，前句尾部作为下一句的 `--tts-speaker-file`）：
 
 ```bat
@@ -171,12 +174,17 @@ open("s2.wav","wb").write(r.content)
 |---|---|---|
 | 0.6B 全Q4 | 564MB | 0.34 |
 | 1.7B 全Q4 | 1.23GB | 0.42 |
+| 1.7B Base 全Q4（双锚）| 1.26GB | ~0.30 |
 | 1.7B Q4+Q8mm | 1.3GB | 0.49 |
 | 1.7B 双Q8 | 2.1GB | 0.58 |
 | 1.7B 全bf16 | 3.9GB | 1.22 |
 
 - `-ngl 99` 全 GPU 只要不溢出就是最快；溢出到共享内存反而变慢
 - server 推理后显存不降是正常的（CUDA 内存池复用）
+
+### ⚠️ Base bf16 在 6GB 卡上偶发卡死（显存踩线）
+
+Base bf16 组合（3.9GB）在该卡上运行时，**偶发**（约 1/6）一次性分配冲到 ~5.9GB（模型 + KV + code2wav workspace 的分配方差），逼近 6GB 上限后换出到共享内存 → 自回归生成从 ~17 帧/秒跌到 0.5~2.4 帧/秒且持续不恢复（换新进程重跑即正常）。复现时 nvidia-smi 峰值 5951MB，正常轮次仅 ~3.6GB；事件日志无驱动 TDR，非驱动崩溃，非本 fork 代码问题（CLI 与 server、单锚与双锚均出现；CustomVoice Q4 ~1.2GB 从未触发）。**对策：Base 用 Q4_K_M 量化**（见第八节 tensor-types 保护法），6 连跑零卡顿 + 速度翻 2.5 倍。
 
 ### ⚠️ 关键：TTS 部署必须 `-c 4096`（否则 code2wav 慢 80 倍）
 
