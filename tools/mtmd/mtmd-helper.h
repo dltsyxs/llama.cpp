@@ -182,6 +182,7 @@ struct mtmd_helper_gen_audio_inp {
     size_t       prompt_len;
 
     mtmd_bitmap * speaker_ref; // optional, can be NULL
+    mtmd_bitmap * anchor_ref;  // optional, fixed identity anchor audio (Base models), can be NULL
     const char * lang; // optional, can be NULL
     const char * speaker_id; // CustomVoice preset speaker name (e.g. "serena"), optional, can be NULL
     const char * instruct;   // natural-language instruction (1.7B CustomVoice only), optional, can be NULL
@@ -277,6 +278,7 @@ struct gen_audio {
         std::string speaker_id_str;
         std::string instruct_str;
         mtmd::bitmap_ptr speaker_ref_ptr;
+        mtmd::bitmap_ptr anchor_ref_ptr;
 
         inp()                             = default;
         inp(inp &&)                       = default;
@@ -287,6 +289,7 @@ struct gen_audio {
         void set_prompt     (std::string p)        { prompt_str = std::move(p); }
         void set_lang       (std::string l)        { lang_str   = std::move(l); }
         void set_speaker_ref(mtmd::bitmap_ptr bmp) { speaker_ref_ptr = std::move(bmp); }
+        void set_anchor_ref (mtmd::bitmap_ptr bmp) { anchor_ref_ptr  = std::move(bmp); }
         void set_speaker_id (std::string s)        { speaker_id_str = std::move(s); }
         void set_instruct   (std::string s)        { instruct_str = std::move(s); }
 
@@ -296,6 +299,7 @@ struct gen_audio {
             data.prompt_len  = prompt_str.size();
             data.lang        = lang_str.empty() ? nullptr : lang_str.c_str();
             data.speaker_ref = speaker_ref_ptr.get();
+            data.anchor_ref  = anchor_ref_ptr.get();
             data.speaker_id  = speaker_id_str.empty() ? nullptr : speaker_id_str.c_str();
             data.instruct    = instruct_str.empty() ? nullptr : instruct_str.c_str();
             return &data;

@@ -4269,9 +4269,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_TTS}));
     add_opt(common_arg(
+        {"--tts-anchor-file"}, "FNAME",
+        "fixed identity anchor audio (Base models); used together with --tts-speaker-file "
+        "for dual-anchor generation",
+        [](common_params & params, const std::string & value) {
+            params.tts_anchor_file = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_TTS}));
+    add_opt(common_arg(
         {"--tts-speaker-id"}, "NAME",
-        "preset speaker name for CustomVoice models (e.g. serena, vivian, eric); "
-        "mutually exclusive with --tts-speaker-file",
+        "preset speaker name for CustomVoice models (e.g. serena, vivian, eric)",
         [](common_params & params, const std::string & value) {
             params.tts_speaker_id = value;
         }

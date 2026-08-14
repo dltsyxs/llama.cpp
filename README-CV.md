@@ -38,7 +38,7 @@ cv-26603 —— 本 fork 的功能分支：
 | `ae5217d83` | wire up mtmd_helper_model_can_chat |
 | `cf5d754e1` | upload speaker_ref via form-data |
 
-- 接口：`POST /tts`，JSON body `input|prompt, lang, speaker_ref_b64, top_k, top_p, repeat_penalty, n_predict(默认512兜底), response_format(wav|pcm), stream`
+- 接口：`POST /tts`，JSON body `input|prompt, lang, speaker_ref_b64, anchor_ref_b64, speaker_id, instruct, top_k, top_p, repeat_penalty, n_predict(默认512兜底), response_format(wav|pcm), stream`
 - **不兼容 OpenAI 库**（非 `/v1/audio/speech`），直接 `requests` 调用
 - cherry-pick 冲突处理：`server_output_limits` 保留主线新版 `return {params.n_batch, 1}` + 加 PR 的 mmproj 条件
 
@@ -116,6 +116,40 @@ open("out.wav", "wb").write(r.content)
 | `--tts-speaker-id` / `"speaker_id"` | CustomVoice 预置音色名（见下表）|
 | `--tts-instruct` / `"instruct"` | 自然语言指示（**1.7B 效果最好**；0.6B 也可用但仅强情绪有效，见附录 A5）|
 | `--tts-speaker-file` / `"speaker_ref"` | Base 模型参考音频克隆（原功能保留）|
+| `--tts-anchor-file` / `"anchor_ref_b64"` | 固定音色锚点音频（Base，见下方双锚说明）|
+
+### 双锚音色（dual-anchor，Base 模型）
+
+长文本逐句生成时，单靠参考音频会出现音色漂移。双锚方案注入两个条件向量：
+
+1. **固定锚（身份）**：锚点音频（3~7s）经 ECAPA-TDNN 编码成 x-vector，放在模型**训练时的音色槽位**——把声线钉死在整个段落。
+2. **前句锚（连续性）**：上一句输出尾部 3~5s 再经 ECAPA 编码，放在**紧贴 `codec_bos` 的位置**（离生成起点最近）——让每句延续上一句真实的声学状态，听感连续如一次生成。
+
+实测（1.7B Base bf16，3060 6GB）：固定锚 = 温迪 3s 音频，逐句链式 ref，avg RTF 0.467，整段音色稳定（用户试听确认）。
+
+**CLI**（每句一个进程，前句尾部作为下一句的 `--tts-speaker-file`）：
+
+```bat
+llama-tts.exe -m ... -mm ... -c 4096 -ngl 99 ^
+  --tts-anchor-file anchor.wav --tts-speaker-file prev_tail.wav ^
+  -p "第一句文本" --tts-lang zh -o s1.wav
+```
+
+**Server**（`POST /tts`，每请求传 base64，可同时传实现双锚）：
+
+```python
+import base64, requests
+anchor = base64.b64encode(open("anchor.wav","rb").read()).decode()
+ref    = base64.b64encode(open("prev_tail.wav","rb").read()).decode()
+r = requests.post("http://127.0.0.1:9931/tts", json={
+    "input": "下一句文本", "lang": "zh",
+    "anchor_ref_b64": anchor, "speaker_ref_b64": ref,
+})
+open("s2.wav","wb").write(r.content)
+```
+
+> [!NOTE]
+> 双锚依赖 ECAPA-TDNN 说话人编码器，**仅 Base 模型可用**；CustomVoice 无说话人编码器（预置音色走 `<|spk_xxx|>` token 嵌入），`--tts-anchor-file` / `--tts-speaker-file` 会报 `mmproj has no speaker/audio encoder`。向后兼容：不传锚点参数时行为与改动前完全一致；单 `--tts-speaker-file` 仍走原音色槽位。
 
 ## 六、CustomVoice 预置音色（9 个）
 

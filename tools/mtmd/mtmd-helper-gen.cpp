@@ -5,6 +5,7 @@
 #include "../src/llama-ext.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -151,20 +152,31 @@ public:
             return 1;
         }
 
-        std::vector<float> speaker_embd;
-        // CustomVoice: preset speaker via <|spk_xxx|> token embedding lookup
+        // dual-anchor speaker conditioning:
+        //   speaker_embd_fixed -> identity anchor, placed at the trained speaker slot
+        //   speaker_embd_fresh -> per-sentence anchor, placed right before codec_bos
+        // source priority for the identity anchor: preset speaker id > fixed anchor audio
+        std::vector<float> speaker_embd_fixed;
+        std::vector<float> speaker_embd_fresh;
         if (inp->speaker_id && inp->speaker_id[0]) {
+            // CustomVoice: preset speaker via <|spk_xxx|> token embedding lookup
             const llama_token spk = find_special_token(vocab, ("<|spk_" + std::string(inp->speaker_id) + "|>").c_str());
             if (spk == LLAMA_TOKEN_NULL) {
                 LOG_ERR("mtmd_helper_gen_audio: unknown speaker_id '%s' (model may be a Base checkpoint, not CustomVoice)\n",
                         inp->speaker_id);
                 return 1;
             }
-            speaker_embd = std::vector<float>(tok_embd.begin() + (size_t) spk * n_embd,
-                                              tok_embd.begin() + (size_t) (spk + 1) * n_embd);
-        } else if (inp->speaker_ref) {
-            // Base: reference audio -> speaker x-vector via ECAPA-TDNN
-            if (!encode_speaker(inp->speaker_ref, speaker_embd)) {
+            speaker_embd_fixed = std::vector<float>(tok_embd.begin() + (size_t) spk * n_embd,
+                                                    tok_embd.begin() + (size_t) (spk + 1) * n_embd);
+        } else if (inp->anchor_ref) {
+            // Base: fixed identity anchor audio -> speaker x-vector via ECAPA-TDNN
+            if (!encode_speaker(inp->anchor_ref, speaker_embd_fixed)) {
+                return 1;
+            }
+        }
+        if (inp->speaker_ref) {
+            // Base: fresh per-sentence reference audio (e.g. previous output tail) -> ECAPA x-vector
+            if (!encode_speaker(inp->speaker_ref, speaker_embd_fresh)) {
                 return 1;
             }
         }
@@ -222,10 +234,19 @@ public:
         prompt.push_back(sum_row(tts_pad, c_think_b));
         prompt.push_back(sum_row(tts_pad, c_lang));
         prompt.push_back(sum_row(tts_pad, c_think_e));
-        if (!speaker_embd.empty()) prompt.push_back(sum_vec(tts_pad, speaker_embd));
+        // identity anchor in the trained speaker slot (fall back to the fresh one for single-ref mode)
+        if (!speaker_embd_fixed.empty()) {
+            prompt.push_back(sum_vec(tts_pad, speaker_embd_fixed));
+        } else if (!speaker_embd_fresh.empty()) {
+            prompt.push_back(sum_vec(tts_pad, speaker_embd_fresh));
+        }
         prompt.push_back(sum_row(tts_bos, codec_pad));
         for (int i = 3; i < n_ids - 5; i++) prompt.push_back(sum_row(ids[(size_t) i], codec_pad));
         prompt.push_back(sum_row(tts_eos, codec_pad));
+        // fresh per-sentence anchor right before codec_bos: strongest conditioning at generation start
+        if (!speaker_embd_fresh.empty() && !speaker_embd_fixed.empty()) {
+            prompt.push_back(sum_vec(tts_pad, speaker_embd_fresh));
+        }
         prompt.push_back(sum_row(tts_pad, codec_bos));
 
         n_prompt = (int) prompt.size();
@@ -296,9 +317,16 @@ public:
         inp.top_k = top_k;
         inp.top_p = top_p;
         mtmd_gen_out out{};
+        auto t0 = std::chrono::steady_clock::now();
         if (mtmd_gen_audio_process(mctx, &inp, &out) != 0) {
             LOG_ERR("mtmd_helper_gen_audio: gen_code process failed\n");
             return 1;
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        stat_gencode_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
+        stat_gencode_cnt++;
+        if (out.n_codes > 0) {
+            n_codes_per_frame = out.n_codes;
         }
 
         codes_buf.insert(codes_buf.end(), out.codes, out.codes + out.n_codes);
@@ -338,6 +366,9 @@ public:
             if (!flush_gen_wav()) {
                 return 1;
             }
+            LOG_WRN("PROFILE total: gen_code %.0f ms over %d calls (avg %.1f ms), gen_wav %.0f ms over %d calls (avg %.1f ms)\n",
+                    stat_gencode_ms, stat_gencode_cnt, stat_gencode_cnt ? stat_gencode_ms/stat_gencode_cnt : 0.0,
+                    stat_genwav_ms,  stat_genwav_cnt,  stat_genwav_cnt  ? stat_genwav_ms /stat_genwav_cnt  : 0.0);
             if (out_n_samples) {
                 *out_n_samples = (int64_t) audio_pcm.size();
             }
@@ -471,10 +502,18 @@ private:
         inp.state_data = c2w_state.empty() ? nullptr : (const char *) c2w_state.data();
         inp.state_size = c2w_state.size();
         mtmd_gen_out out{};
+        auto t0 = std::chrono::steady_clock::now();
         if (mtmd_gen_audio_process(mctx, &inp, &out) != 0) {
             LOG_ERR("mtmd_helper_gen_audio: gen_wav process failed\n");
             return false;
         }
+        auto t1 = std::chrono::steady_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        stat_genwav_ms += ms;
+        stat_genwav_cnt++;
+        LOG_WRN("PROFILE gen_wav: %d frames -> %.1f ms (total %.0f ms over %d calls)\n",
+                (int) (codes_buf.size() / n_codes_per_frame),
+                ms, stat_genwav_ms, stat_genwav_cnt);
         audio_pcm.insert(audio_pcm.end(), out.audio, out.audio + out.n_samples);
         c2w_state.assign(out.state_data, out.state_data + out.state_size);
         codes_buf.clear();
@@ -496,7 +535,22 @@ private:
     std::vector<float> tok_embd; // whole token embedding matrix, n_vocab * n_embd
 
     // must match hparams.wav_tfm_swa hardcoded in clip.cpp
+    // 72 = ~6s of audio per batch (12 Hz). Set to SIZE_MAX for one-shot
+    // (batch-decode everything only when generation finishes) to measure
+    // how much time synchronous code2wav flushing costs vs. the autoregressive
+    // loop. NOTE: this makes output non-streaming (nothing until the end).
+    // must match hparams.wav_tfm_swa hardcoded in clip.cpp
+    // 72 = ~6s of audio per batch (12 Hz). This is NOT a tunable perf knob:
+    // the code2wav decoder's sliding window (speech_tokenizer/config.json
+    // sliding_window=72) caps how many frames it can attend to at once.
     size_t window_frames = 72;
+
+    // PROFILE: time spent in code2wav vs autoregressive gen_code
+    double stat_genwav_ms  = 0.0;
+    int    stat_genwav_cnt = 0;
+    double stat_gencode_ms = 0.0;
+    int    stat_gencode_cnt = 0;
+    size_t n_codes_per_frame = 16; // 16 RVQ codebooks; set from first gen_code call
 
     // per-generation state, cleared by reset()
     llama_seq_id seq_id = 0;
@@ -545,6 +599,9 @@ void mtmd_helper_gen_audio_free(mtmd_helper_gen_audio * ctx) {
 }
 
 void mtmd_helper_gen_audio_reset(mtmd_helper_gen_audio * ctx) {
+    if (ctx == nullptr) {
+        return;
+    }
     if (ctx->pipeline) {
         ctx->pipeline->reset();
     }

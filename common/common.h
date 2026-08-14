@@ -734,10 +734,11 @@ struct common_params {
     bool no_alloc = false; // Don't allocate model buffers
 
     // TTS params
-    std::string tts_lang = "";
-    std::string tts_speaker_file = "";
-    std::string tts_speaker_id = ""; // CustomVoice preset speaker name (e.g. "serena")
-    std::string tts_instruct = "";   // CustomVoice 1.7B natural-language instruction
+std::string tts_lang = "";
+std::string tts_speaker_file = "";
+std::string tts_anchor_file = "";  // fixed identity anchor audio (Base models, dual-anchor mode)
+std::string tts_speaker_id = ""; // CustomVoice preset speaker name (e.g. "serena")
+std::string tts_instruct = "";   // CustomVoice 1.7B natural-language instruction
 
     bool is_gen_docs = false; // whether we are running inside llama-gen-docs
 };

@@ -5323,6 +5323,33 @@ void server_routes::init_routes() {
             SRV_WRN("%s", "no speaker reference provided, the model may behave randomly\n");
         }
 
+        // identity anchor for dual-anchor mode (Base models): form file "anchor_ref",
+        // base64 "anchor_ref_b64", or the startup --tts-anchor-file flag as a default
+        const unsigned char * anchor_ref_data = nullptr;
+        size_t anchor_ref_len = 0;
+        std::string anchor_ref_b64_decoded;
+
+        auto anchor_ref_file = req.files.find("anchor_ref");
+        if (anchor_ref_file != req.files.end()) {
+            anchor_ref_data = anchor_ref_file->second.data.data();
+            anchor_ref_len  = anchor_ref_file->second.data.size();
+        } else {
+            std::string anchor_ref_b64 = json_value(body, "anchor_ref_b64", std::string());
+            if (!anchor_ref_b64.empty()) {
+                anchor_ref_b64_decoded = base64::decode(anchor_ref_b64);
+                anchor_ref_data = (const unsigned char *) anchor_ref_b64_decoded.data();
+                anchor_ref_len  = anchor_ref_b64_decoded.size();
+            }
+        }
+        if (anchor_ref_data != nullptr && anchor_ref_len > 0) {
+            auto wrapper = mtmd_helper_bitmap_init_from_buf(ctx_server.mctx, anchor_ref_data, anchor_ref_len, false);
+            if (!wrapper.bitmap) {
+                res->error(format_error_response("failed to decode \"anchor_ref\"", ERROR_TYPE_INVALID_REQUEST));
+                return res;
+            }
+            task.tts_inp.set_anchor_ref(mtmd::bitmap_ptr(wrapper.bitmap));
+        }
+
         auto & rd = res->rd;
         task.id = rd.get_new_id();
         rd.post_task(std::move(task));

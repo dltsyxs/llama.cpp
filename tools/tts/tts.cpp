@@ -110,6 +110,16 @@ int main(int argc, char ** argv) {
         speaker_bitmap.reset(wrapper.bitmap);
     }
 
+    mtmd::bitmap_ptr anchor_bitmap;
+    if (!params.tts_anchor_file.empty()) {
+        auto wrapper = mtmd_helper_bitmap_init_from_file(mctx.get(), params.tts_anchor_file.c_str(), false);
+        if (!wrapper.bitmap) {
+            LOG_ERR("failed to load anchor file %s\n", params.tts_anchor_file.c_str());
+            return 1;
+        }
+        anchor_bitmap.reset(wrapper.bitmap);
+    }
+
     mtmd_helper::gen_audio gen;
     gen.init(lctx, mctx.get());
     mtmd_helper_gen_audio_inp inp = mtmd_helper_gen_audio_inp_default();
@@ -117,6 +127,7 @@ int main(int argc, char ** argv) {
     inp.prompt      = params.prompt.c_str();
     inp.prompt_len  = params.prompt.size();
     inp.speaker_ref = speaker_bitmap.get();
+    inp.anchor_ref  = anchor_bitmap.get();
     inp.lang        = params.tts_lang.c_str();
     inp.speaker_id  = params.tts_speaker_id.empty() ? nullptr : params.tts_speaker_id.c_str();
     inp.instruct    = params.tts_instruct.empty() ? nullptr : params.tts_instruct.c_str();
